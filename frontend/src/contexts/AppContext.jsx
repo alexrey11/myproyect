@@ -19,9 +19,12 @@ export const AppProvider = ({ children }) => {
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
 
+        // Solo sincronizar al inicio si estamos online
         if (navigator.onLine) {
             setSyncing(true);
             syncService.syncAll().finally(() => setSyncing(false));
+        } else {
+            console.log('⏳ Modo offline: no se sincronizará al inicio.');
         }
 
         return () => {

@@ -4,10 +4,11 @@ import { useCurrency } from '../contexts/CurrencyContext';
 import { db } from '../services/Database';
 import { syncService } from '../services/SyncService';
 import { useCart } from '../contexts/CartContext';
-import { Trash2, Plus, Minus, CreditCard, ShoppingCart, User, Search, Wallet } from 'lucide-react';
+import { Trash2, Plus, Minus, CreditCard, ShoppingCart, User, Search, Camera } from 'lucide-react';
 import axios from 'axios';
+import BarcodeScanner from '../components/BarcodeScanner';
 
-const API_URL = 'http://localhost:3001/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 const getAuthHeader = () => {
     const token = localStorage.getItem('token');
@@ -24,9 +25,10 @@ export default function POS() {
     const [selectedCurrency, setSelectedCurrency] = useState('CUP');
     const [paymentMethod, setPaymentMethod] = useState('efectivo');
     const [transactionId, setTransactionId] = useState('');
+    const [showScanner, setShowScanner] = useState(false);
     const { cart, addToCart, removeFromCart, updateQuantity, clearCart, totalCart } = useCart();
     const { isOnline } = useApp();
-    const { currencies, convertPrice, formatPrice, getCurrencySymbol, defaultCurrency, getRate } = useCurrency();
+    const { currencies, convertPrice, getCurrencySymbol, defaultCurrency, getRate } = useCurrency();
 
     useEffect(() => {
         if (defaultCurrency) setSelectedCurrency(defaultCurrency.code);
@@ -73,11 +75,14 @@ export default function POS() {
         addToCart(productWithPrice);
     };
 
-    // Cambiar moneda del carrito completo (opcional, para ventas mixtas)
-    const handleCurrencyChange = (newCurrency) => {
-        setSelectedCurrency(newCurrency);
-        // Opcional: convertir todos los items del carrito a la nueva moneda
-        // Por ahora, cada item mantiene su moneda original
+    const handleScan = (code) => {
+        const product = products.find(p => p.sku === code);
+        if (product) {
+            handleAddToCart(product);
+            setShowScanner(false);
+        } else {
+            alert('Producto no encontrado. SKU: ' + code);
+        }
     };
 
     const handleCheckout = async () => {
@@ -164,7 +169,12 @@ export default function POS() {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 card p-5 dark:bg-slate-800">
-                <h3 className="text-xl font-semibold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><ShoppingCart size={22} /> Productos</h3>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-semibold text-slate-800 dark:text-white flex items-center gap-2"><ShoppingCart size={22} /> Productos</h3>
+                    <button onClick={() => setShowScanner(true)} className="btn-primary flex items-center gap-2">
+                        <Camera size={18} /> Escanear
+                    </button>
+                </div>
                 <div className="mb-4 relative">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
                     <input type="text" placeholder="Buscar producto por nombre o SKU..." value={productSearch} onChange={e => setProductSearch(e.target.value)} className="input-field pl-10" />
@@ -201,19 +211,16 @@ export default function POS() {
 
                 <div className="mb-4">
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1"><CreditCard size={16} /> Moneda</label>
-                    <select value={selectedCurrency} onChange={e => handleCurrencyChange(e.target.value)} className="input-field">
+                    <select value={selectedCurrency} onChange={e => setSelectedCurrency(e.target.value)} className="input-field">
                         {currencies.filter(c => c.active !== false).map(c => (
                             <option key={c.id} value={c.code}>{c.code} - {c.symbol} (1 {c.code} = {c.exchange_rate} CUP)</option>
                         ))}
                     </select>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        Tasa: 1 {selectedCurrency} = {getRate(selectedCurrency)} CUP
-                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Tasa: 1 {selectedCurrency} = {getRate(selectedCurrency)} CUP</p>
                 </div>
 
-                {/* Método de pago */}
                 <div className="mb-4">
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1"><Wallet size={16} /> Método de pago</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">💰 Método de pago</label>
                     <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="input-field">
                         <option value="efectivo">💵 Efectivo</option>
                         <option value="transferencia">🏦 Transferencia bancaria</option>
@@ -223,7 +230,6 @@ export default function POS() {
                     </select>
                 </div>
 
-                {/* Número de transacción (para Transfermóvil, Transferencia, etc.) */}
                 {(paymentMethod === 'transferencia' || paymentMethod === 'transfermovil' || paymentMethod === 'tarjeta') && (
                     <div className="mb-4">
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Número de transacción</label>
@@ -278,6 +284,14 @@ export default function POS() {
                 )}
                 {saleStatus && <div className={`mt-4 p-3 text-center rounded-lg ${saleStatus.includes('✅') ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'}`}>{saleStatus}</div>}
             </div>
+
+            {showScanner && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 max-w-md w-full">
+                        <BarcodeScanner onDetected={handleScan} onClose={() => setShowScanner(false)} />
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

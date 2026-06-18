@@ -101,6 +101,18 @@ export default function Settings() {
             toast.error('Error al eliminar');
         }
     };
+    const sendTestTelegram = async () => {
+        try {
+            await axios.post(
+                `${API_URL}/telegram/send`,
+                { message: '🔔 Mensaje de prueba desde Gestión Pro' },
+                { headers: getAuthHeader() }
+            );
+            alert('✅ Mensaje enviado a Telegram');
+        } catch (err) {
+            alert('❌ Error enviando mensaje');
+        }
+    };
 
     const editCurrency = (currency) => {
         setEditingCurrencyId(currency.id);

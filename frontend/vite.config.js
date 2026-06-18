@@ -9,9 +9,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'robots.txt'],
       manifest: {
-        name: 'Tecopos Plus',
-        short_name: 'Tecopos',
-        description: 'Sistema de punto de venta offline',
+        name: 'Gestión Pro',
+        short_name: 'Gestión',
+        description: 'Sistema de gestión de negocios',
         theme_color: '#1a56db',
         background_color: '#ffffff',
         display: 'standalone',
@@ -33,7 +33,7 @@ export default defineConfig({
               cacheName: 'google-fonts-cache',
               expiration: {
                 maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365 // 1 año
+                maxAgeSeconds: 60 * 60 * 24 * 365
               }
             }
           }
