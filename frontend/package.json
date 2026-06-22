@@ -9,8 +9,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node server.js",
-    "postinstall": "npm rebuild better-sqlite3"
+    "start": "node server.js"
   },
   "dependencies": {
     "@zxing/browser": "^0.2.0",
