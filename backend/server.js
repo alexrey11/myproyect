@@ -60,8 +60,7 @@ app.use(cors(corsOptions));
 
 app.use(bodyParser.json());
 
-// ========== BASE DE DATOS ==========
-const db = new sqlite3.Database('./gestionpro.db');
+
 
 // ========== MIDDLEWARE ==========
 const authenticateToken = (req, res, next) => {
