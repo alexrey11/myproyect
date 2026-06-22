@@ -1,6 +1,4 @@
 const express = require('express');
-const Database = require('better-sqlite3');
-const db = new Database('./gestionpro.db');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
@@ -9,6 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const webpush = require('web-push');
 
+// ========== BASE DE DATOS (better-sqlite3) ==========
+const Database = require('better-sqlite3');
+const db = new Database('./gestionpro.db');
+
+// ========== CONFIGURACIÓN DE LA APP ==========
 const app = express();
 const port = process.env.PORT || 3001;
 const SECRET_KEY = process.env.JWT_SECRET || 'gestionpro_secret_key_change_in_production';
@@ -39,7 +42,7 @@ try {
 
 // ========== TELEGRAM ==========
 const TelegramBot = require('node-telegram-bot-api');
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || 'TOKEN_AQUI';
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || 'TU_TOKEN_AQUI';
 let telegramBot;
 if (TELEGRAM_TOKEN && TELEGRAM_TOKEN !== 'TU_TOKEN_AQUI') {
   telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
@@ -57,10 +60,7 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-
 app.use(bodyParser.json());
-
-
 
 // ========== MIDDLEWARE ==========
 const authenticateToken = (req, res, next) => {
@@ -79,10 +79,10 @@ const isAdmin = (req, res, next) => {
   next();
 };
 
-// ========== INICIALIZAR TABLAS ==========
-db.serialize(() => {
+// ========== INICIALIZAR TABLAS (SÍNCRONO) ==========
+const createTables = () => {
   // Usuarios
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -95,10 +95,10 @@ db.serialize(() => {
     )
   `);
   const adminHash = bcrypt.hashSync('admin123', 10);
-  db.run("INSERT OR IGNORE INTO users (username, password, role, active) VALUES (?, ?, 'admin', 1)", ['admin', adminHash]);
+  db.prepare("INSERT OR IGNORE INTO users (username, password, role, active) VALUES (?, ?, 'admin', 1)").run('admin', adminHash);
 
   // Productos
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -112,7 +112,7 @@ db.serialize(() => {
   `);
 
   // Clientes
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS customers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -124,7 +124,7 @@ db.serialize(() => {
   `);
 
   // Ventas
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS sales (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       customer_id INTEGER,
@@ -139,7 +139,7 @@ db.serialize(() => {
   `);
 
   // Items de venta
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS sale_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       sale_id INTEGER,
@@ -153,7 +153,7 @@ db.serialize(() => {
   `);
 
   // Monedas
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS currencies (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT UNIQUE NOT NULL,
@@ -166,7 +166,7 @@ db.serialize(() => {
   `);
 
   // Proveedores
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS suppliers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -179,7 +179,7 @@ db.serialize(() => {
   `);
 
   // Compras
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       supplier_id INTEGER,
@@ -190,7 +190,7 @@ db.serialize(() => {
   `);
 
   // Items de compra
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS purchase_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       purchase_id INTEGER,
@@ -203,7 +203,7 @@ db.serialize(() => {
   `);
 
   // Suscripciones push
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER,
@@ -215,7 +215,7 @@ db.serialize(() => {
   `);
 
   // Contabilidad - Transacciones
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
@@ -231,257 +231,283 @@ db.serialize(() => {
   `);
 
   // ========== MIGRACIONES ==========
-  db.all("PRAGMA table_info(users)", (err, columns) => {
-    if (!err && columns && Array.isArray(columns)) {
-      if (!columns.some(col => col.name === 'permissions')) db.run("ALTER TABLE users ADD COLUMN permissions TEXT");
-      if (!columns.some(col => col.name === 'active')) db.run("ALTER TABLE users ADD COLUMN active INTEGER DEFAULT 1");
-      if (!columns.some(col => col.name === 'last_login')) db.run("ALTER TABLE users ADD COLUMN last_login TEXT");
+  // Obtener columnas de cada tabla y agregar las que faltan
+  const addColumnIfNotExists = (table, columnDef) => {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    const colNames = columns.map(c => c.name);
+    if (!colNames.includes(columnDef.split(' ')[0])) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
     }
-  });
+  };
 
-  db.all("PRAGMA table_info(products)", (err, columns) => {
-    if (!err && columns && Array.isArray(columns)) {
-      if (!columns.some(col => col.name === 'currency')) db.run("ALTER TABLE products ADD COLUMN currency TEXT DEFAULT 'CUP'");
-      if (!columns.some(col => col.name === 'min_stock')) db.run("ALTER TABLE products ADD COLUMN min_stock INTEGER DEFAULT 5");
-    }
-  });
-
-  db.all("PRAGMA table_info(sales)", (err, columns) => {
-    if (!err && columns && Array.isArray(columns)) {
-      if (!columns.some(col => col.name === 'currency')) db.run("ALTER TABLE sales ADD COLUMN currency TEXT DEFAULT 'CUP'");
-      if (!columns.some(col => col.name === 'payment_method')) db.run("ALTER TABLE sales ADD COLUMN payment_method TEXT DEFAULT 'efectivo'");
-      if (!columns.some(col => col.name === 'transaction_id')) db.run("ALTER TABLE sales ADD COLUMN transaction_id TEXT");
-      if (!columns.some(col => col.name === 'synced')) db.run("ALTER TABLE sales ADD COLUMN synced INTEGER DEFAULT 0");
-    }
-  });
-
-  db.all("PRAGMA table_info(sale_items)", (err, columns) => {
-    if (!err && columns && Array.isArray(columns)) {
-      if (!columns.some(col => col.name === 'currency')) db.run("ALTER TABLE sale_items ADD COLUMN currency TEXT DEFAULT 'CUP'");
-    }
-  });
+  addColumnIfNotExists('users', 'permissions TEXT');
+  addColumnIfNotExists('users', 'active INTEGER DEFAULT 1');
+  addColumnIfNotExists('users', 'last_login TEXT');
+  addColumnIfNotExists('products', 'currency TEXT DEFAULT "CUP"');
+  addColumnIfNotExists('products', 'min_stock INTEGER DEFAULT 5');
+  addColumnIfNotExists('sales', 'currency TEXT DEFAULT "CUP"');
+  addColumnIfNotExists('sales', 'payment_method TEXT DEFAULT "efectivo"');
+  addColumnIfNotExists('sales', 'transaction_id TEXT');
+  addColumnIfNotExists('sales', 'synced INTEGER DEFAULT 0');
+  addColumnIfNotExists('sale_items', 'currency TEXT DEFAULT "CUP"');
 
   // ========== DATOS DE EJEMPLO ==========
-  db.get("SELECT COUNT(*) as count FROM products", (err, row) => {
-    if (row && row.count === 0) {
-      const prods = [
-        { name: "Café Americano", price: 2.5, stock: 100, min_stock: 10, sku: "CAF001", currency: "CUP" },
-        { name: "Croissant", price: 1.8, stock: 50, min_stock: 8, sku: "CRO002", currency: "CUP" },
-        { name: "Sandwich de pollo", price: 4.5, stock: 30, min_stock: 5, sku: "SAND003", currency: "CUP" },
-        { name: "Jugo de naranja", price: 2.0, stock: 4, min_stock: 10, sku: "JUG004", currency: "CUP" }
-      ];
-      const stmt = db.prepare("INSERT INTO products (name, price, stock, min_stock, sku, currency) VALUES (?, ?, ?, ?, ?, ?)");
-      prods.forEach(p => stmt.run(p.name, p.price, p.stock, p.min_stock, p.sku, p.currency));
-      stmt.finalize();
-      console.log("✅ Productos de muestra insertados");
-    }
-  });
+  const productCount = db.prepare("SELECT COUNT(*) as count FROM products").get();
+  if (productCount.count === 0) {
+    const insert = db.prepare("INSERT INTO products (name, price, stock, min_stock, sku, currency) VALUES (?, ?, ?, ?, ?, ?)");
+    const prods = [
+      ["Café Americano", 2.5, 100, 10, "CAF001", "CUP"],
+      ["Croissant", 1.8, 50, 8, "CRO002", "CUP"],
+      ["Sandwich de pollo", 4.5, 30, 5, "SAND003", "CUP"],
+      ["Jugo de naranja", 2.0, 4, 10, "JUG004", "CUP"]
+    ];
+    const insertMany = db.transaction((items) => {
+      for (const item of items) insert.run(...item);
+    });
+    insertMany(prods);
+    console.log("✅ Productos de muestra insertados");
+  }
 
-  db.get("SELECT COUNT(*) as count FROM customers", (err, row) => {
-    if (row && row.count === 0) {
-      const custs = [
-        { name: "Cliente Genérico", email: "cliente@ejemplo.com", phone: "555-0001", address: "Calle Principal 123" },
-        { name: "María López", email: "maria@ejemplo.com", phone: "555-0002", address: "Av. Central 456" },
-        { name: "Juan Pérez", email: "juan@ejemplo.com", phone: "555-0003", address: "Plaza Mayor 789" }
-      ];
-      const stmt = db.prepare("INSERT INTO customers (name, email, phone, address) VALUES (?, ?, ?, ?)");
-      custs.forEach(c => stmt.run(c.name, c.email, c.phone, c.address));
-      stmt.finalize();
-      console.log("✅ Clientes de muestra insertados");
-    }
-  });
+  const customerCount = db.prepare("SELECT COUNT(*) as count FROM customers").get();
+  if (customerCount.count === 0) {
+    const insert = db.prepare("INSERT INTO customers (name, email, phone, address) VALUES (?, ?, ?, ?)");
+    const custs = [
+      ["Cliente Genérico", "cliente@ejemplo.com", "555-0001", "Calle Principal 123"],
+      ["María López", "maria@ejemplo.com", "555-0002", "Av. Central 456"],
+      ["Juan Pérez", "juan@ejemplo.com", "555-0003", "Plaza Mayor 789"]
+    ];
+    const insertMany = db.transaction((items) => {
+      for (const item of items) insert.run(...item);
+    });
+    insertMany(custs);
+    console.log("✅ Clientes de muestra insertados");
+  }
 
-  db.get("SELECT COUNT(*) as count FROM currencies", (err, row) => {
-    if (row && row.count === 0) {
-      const currencies = [
-        { code: "CUP", name: "Peso Cubano", symbol: "$", exchange_rate: 1, is_default: 1, active: 1 },
-        { code: "USD", name: "Dólar Estadounidense", symbol: "US$", exchange_rate: 24, is_default: 0, active: 1 },
-        { code: "MLC", name: "Moneda Libremente Convertible", symbol: "MLC$", exchange_rate: 1, is_default: 0, active: 1 }
-      ];
-      const stmt = db.prepare("INSERT INTO currencies (code, name, symbol, exchange_rate, is_default, active) VALUES (?, ?, ?, ?, ?, ?)");
-      currencies.forEach(c => stmt.run(c.code, c.name, c.symbol, c.exchange_rate, c.is_default, c.active));
-      stmt.finalize();
-      console.log("✅ Monedas de muestra insertadas");
-    }
-  });
+  const currencyCount = db.prepare("SELECT COUNT(*) as count FROM currencies").get();
+  if (currencyCount.count === 0) {
+    const insert = db.prepare("INSERT INTO currencies (code, name, symbol, exchange_rate, is_default, active) VALUES (?, ?, ?, ?, ?, ?)");
+    const currencies = [
+      ["CUP", "Peso Cubano", "$", 1, 1, 1],
+      ["USD", "Dólar Estadounidense", "US$", 24, 0, 1],
+      ["MLC", "Moneda Libremente Convertible", "MLC$", 1, 0, 1]
+    ];
+    const insertMany = db.transaction((items) => {
+      for (const item of items) insert.run(...item);
+    });
+    insertMany(currencies);
+    console.log("✅ Monedas de muestra insertadas");
+  }
 
-  db.get("SELECT COUNT(*) as count FROM suppliers", (err, row) => {
-    if (row && row.count === 0) {
-      const suppliers = [
-        { name: "Distribuidora Central", contact: "Carlos Pérez", phone: "555-1000", email: "central@dist.com", address: "Calle 1 # 100" },
-        { name: "Proveedora del Este", contact: "Ana Gómez", phone: "555-2000", email: "este@prov.com", address: "Av. 2 # 200" },
-        { name: "Alimentos del Oeste", contact: "Luis Rodríguez", phone: "555-3000", email: "oeste@alim.com", address: "Calle 3 # 300" }
-      ];
-      const stmt = db.prepare("INSERT INTO suppliers (name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?)");
-      suppliers.forEach(s => stmt.run(s.name, s.contact, s.phone, s.email, s.address));
-      stmt.finalize();
-      console.log("✅ Proveedores de muestra insertados");
-    }
-  });
-});
+  const supplierCount = db.prepare("SELECT COUNT(*) as count FROM suppliers").get();
+  if (supplierCount.count === 0) {
+    const insert = db.prepare("INSERT INTO suppliers (name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?)");
+    const suppliers = [
+      ["Distribuidora Central", "Carlos Pérez", "555-1000", "central@dist.com", "Calle 1 # 100"],
+      ["Proveedora del Este", "Ana Gómez", "555-2000", "este@prov.com", "Av. 2 # 200"],
+      ["Alimentos del Oeste", "Luis Rodríguez", "555-3000", "oeste@alim.com", "Calle 3 # 300"]
+    ];
+    const insertMany = db.transaction((items) => {
+      for (const item of items) insert.run(...item);
+    });
+    insertMany(suppliers);
+    console.log("✅ Proveedores de muestra insertados");
+  }
+};
+
+// Ejecutar la creación de tablas
+try {
+  createTables();
+} catch (err) {
+  console.error('Error creando tablas:', err);
+  process.exit(1);
+}
 
 // ========== ENDPOINTS DE AUTENTICACIÓN ==========
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', (req, res) => {
   const { username, password, role } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
   const hashed = bcrypt.hashSync(password, 10);
-  db.run("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", [username, hashed, role || 'vendedor'], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ id: this.lastID, username, role: role || 'vendedor' });
-  });
+  try {
+    const result = db.prepare("INSERT INTO users (username, password, role) VALUES (?, ?, ?)").run(username, hashed, role || 'vendedor');
+    res.json({ id: result.lastInsertRowid, username, role: role || 'vendedor' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
-  db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
     if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
     if (!bcrypt.compareSync(password, user.password)) return res.status(401).json({ error: 'Contraseña incorrecta' });
     if (!user.active) return res.status(401).json({ error: 'Usuario inactivo' });
-    db.run("UPDATE users SET last_login = ? WHERE id = ?", [new Date().toISOString(), user.id]);
+    db.prepare("UPDATE users SET last_login = ? WHERE id = ?").run(new Date().toISOString(), user.id);
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, permissions: user.permissions },
       SECRET_KEY,
       { expiresIn: '12h' }
     );
     res.json({ token, user: { id: user.id, username: user.username, role: user.role, permissions: user.permissions } });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== ENDPOINTS DE USUARIOS ==========
 app.get('/api/users', authenticateToken, isAdmin, (req, res) => {
-  db.all("SELECT id, username, role, permissions, active, last_login, created_at FROM users ORDER BY id", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT id, username, role, permissions, active, last_login, created_at FROM users ORDER BY id").all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/users', authenticateToken, isAdmin, (req, res) => {
   const { username, password, role, permissions, active } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
   const hashed = bcrypt.hashSync(password, 10);
-  db.run("INSERT INTO users (username, password, role, permissions, active) VALUES (?, ?, ?, ?, ?)",
-    [username, hashed, role || 'vendedor', JSON.stringify(permissions || {}), active !== undefined ? active : 1],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    });
+  try {
+    const result = db.prepare("INSERT INTO users (username, password, role, permissions, active) VALUES (?, ?, ?, ?, ?)")
+      .run(username, hashed, role || 'vendedor', JSON.stringify(permissions || {}), active !== undefined ? active : 1);
+    res.json({ id: result.lastInsertRowid });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/users/:id', authenticateToken, isAdmin, (req, res) => {
   const { username, password, role, permissions, active } = req.body;
-  let query = "UPDATE users SET username=?, role=?, permissions=?, active=? WHERE id=?";
-  let params = [username, role || 'vendedor', JSON.stringify(permissions || {}), active !== undefined ? active : 1, req.params.id];
-  if (password) {
-    query = "UPDATE users SET username=?, password=?, role=?, permissions=?, active=? WHERE id=?";
-    const hashed = bcrypt.hashSync(password, 10);
-    params = [username, hashed, role || 'vendedor', JSON.stringify(permissions || {}), active !== undefined ? active : 1, req.params.id];
-  }
-  db.run(query, params, function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    if (password) {
+      const hashed = bcrypt.hashSync(password, 10);
+      db.prepare("UPDATE users SET username=?, password=?, role=?, permissions=?, active=? WHERE id=?")
+        .run(username, hashed, role || 'vendedor', JSON.stringify(permissions || {}), active !== undefined ? active : 1, req.params.id);
+    } else {
+      db.prepare("UPDATE users SET username=?, role=?, permissions=?, active=? WHERE id=?")
+        .run(username, role || 'vendedor', JSON.stringify(permissions || {}), active !== undefined ? active : 1, req.params.id);
+    }
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/api/users/:id', authenticateToken, isAdmin, (req, res) => {
-  db.run("DELETE FROM users WHERE id = ?", [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== ENDPOINTS DE PRODUCTOS ==========
 app.get('/api/products', authenticateToken, (req, res) => {
-  db.all("SELECT * FROM products ORDER BY id", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT * FROM products ORDER BY id").all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/products/low-stock', authenticateToken, (req, res) => {
-  db.all("SELECT * FROM products WHERE stock <= min_stock ORDER BY (stock*1.0/min_stock) ASC", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT * FROM products WHERE stock <= min_stock ORDER BY (stock*1.0/min_stock) ASC").all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/products', authenticateToken, isAdmin, (req, res) => {
   const { name, price, stock, min_stock, sku, currency } = req.body;
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  db.run("INSERT INTO products (name, price, stock, min_stock, sku, currency) VALUES (?, ?, ?, ?, ?, ?)",
-    [name, price || 0, stock || 0, min_stock || 5, sku || null, currency || 'CUP'],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    });
+  try {
+    const result = db.prepare("INSERT INTO products (name, price, stock, min_stock, sku, currency) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(name, price || 0, stock || 0, min_stock || 5, sku || null, currency || 'CUP');
+    res.json({ id: result.lastInsertRowid });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/products/:id', authenticateToken, isAdmin, (req, res) => {
   const { name, price, stock, min_stock, sku, currency } = req.body;
-  db.run("UPDATE products SET name=?, price=?, stock=?, min_stock=?, sku=?, currency=? WHERE id=?",
-    [name, price, stock, min_stock, sku, currency || 'CUP', req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
+  try {
+    db.prepare("UPDATE products SET name=?, price=?, stock=?, min_stock=?, sku=?, currency=? WHERE id=?")
+      .run(name, price, stock, min_stock, sku, currency || 'CUP', req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/api/products/:id', authenticateToken, isAdmin, (req, res) => {
-  db.run("DELETE FROM products WHERE id=?", [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    db.prepare("DELETE FROM products WHERE id=?").run(req.params.id);
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== ENDPOINTS DE CLIENTES ==========
 app.get('/api/customers', authenticateToken, (req, res) => {
-  db.all("SELECT * FROM customers ORDER BY name", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT * FROM customers ORDER BY name").all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/customers', authenticateToken, (req, res) => {
   const { name, email, phone, address } = req.body;
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  db.run("INSERT INTO customers (name, email, phone, address) VALUES (?, ?, ?, ?)",
-    [name, email, phone, address],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    });
+  try {
+    const result = db.prepare("INSERT INTO customers (name, email, phone, address) VALUES (?, ?, ?, ?)")
+      .run(name, email, phone, address);
+    res.json({ id: result.lastInsertRowid });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/customers/:id', authenticateToken, (req, res) => {
   const { name, email, phone, address } = req.body;
-  db.run("UPDATE customers SET name=?, email=?, phone=?, address=? WHERE id=?",
-    [name, email, phone, address, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
+  try {
+    db.prepare("UPDATE customers SET name=?, email=?, phone=?, address=? WHERE id=?")
+      .run(name, email, phone, address, req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/api/customers/:id', authenticateToken, (req, res) => {
-  db.run("DELETE FROM customers WHERE id=?", [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    db.prepare("DELETE FROM customers WHERE id=?").run(req.params.id);
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/customers/:id/purchases', authenticateToken, (req, res) => {
   const customerId = req.params.id;
-  const query = `
-    SELECT s.id, s.date, s.total, s.currency, s.payment_method, s.transaction_id,
-           si.product_id, p.name as product_name, si.quantity, si.price
-    FROM sales s
-    JOIN sale_items si ON s.id = si.sale_id
-    JOIN products p ON si.product_id = p.id
-    WHERE s.customer_id = ?
-    ORDER BY s.date DESC
-  `;
-  db.all(query, [customerId], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(`
+      SELECT s.id, s.date, s.total, s.currency, s.payment_method, s.transaction_id,
+             si.product_id, p.name as product_name, si.quantity, si.price
+      FROM sales s
+      JOIN sale_items si ON s.id = si.sale_id
+      JOIN products p ON si.product_id = p.id
+      WHERE s.customer_id = ?
+      ORDER BY s.date DESC
+    `).all(customerId);
     const purchasesMap = new Map();
     rows.forEach(row => {
       if (!purchasesMap.has(row.id)) {
@@ -503,7 +529,9 @@ app.get('/api/customers/:id/purchases', authenticateToken, (req, res) => {
       });
     });
     res.json(Array.from(purchasesMap.values()));
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== ENDPOINTS DE VENTAS ==========
@@ -514,64 +542,70 @@ app.get('/api/sales', authenticateToken, (req, res) => {
            c.name as customer_name, c.id as customer_id
     FROM sales s
     LEFT JOIN customers c ON s.customer_id = c.id
+    WHERE 1=1
   `;
   const params = [];
   if (start && end) {
-    query += ` WHERE date BETWEEN ? AND ? `;
+    query += ` AND date BETWEEN ? AND ?`;
     params.push(start, end);
   } else if (start) {
-    query += ` WHERE date >= ? `;
+    query += ` AND date >= ?`;
     params.push(start);
   } else if (end) {
-    query += ` WHERE date <= ? `;
+    query += ` AND date <= ?`;
     params.push(end);
   }
   query += ` ORDER BY s.date DESC`;
-  db.all(query, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(query).all(...params);
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/sales/recent', authenticateToken, (req, res) => {
-  const query = `
-    SELECT s.id, s.date, s.total, s.currency,
-           c.name as customer_name
-    FROM sales s
-    LEFT JOIN customers c ON s.customer_id = c.id
-    ORDER BY s.date DESC
-    LIMIT 10
-  `;
-  db.all(query, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(`
+      SELECT s.id, s.date, s.total, s.currency,
+             c.name as customer_name
+      FROM sales s
+      LEFT JOIN customers c ON s.customer_id = c.id
+      ORDER BY s.date DESC
+      LIMIT 10
+    `).all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/sales/daily', authenticateToken, (req, res) => {
   const { days = 7 } = req.query;
-  db.all(`
-    SELECT date(date) as day, SUM(total) as total
-    FROM sales
-    WHERE date >= date('now', '-' || ? || ' days')
-    GROUP BY date(date)
-    ORDER BY day ASC
-  `, [days], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(`
+      SELECT date(date) as day, SUM(total) as total
+      FROM sales
+      WHERE date >= date('now', '-' || ? || ' days')
+      GROUP BY date(date)
+      ORDER BY day ASC
+    `).all(days);
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/sales/:id', authenticateToken, (req, res) => {
   const { total, payment_method, transaction_id } = req.body;
-  const id = req.params.id;
-  db.run("UPDATE sales SET total=?, payment_method=?, transaction_id=? WHERE id=?",
-    [total, payment_method, transaction_id, id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Venta no encontrada' });
-      res.json({ success: true });
-    });
+  try {
+    const result = db.prepare("UPDATE sales SET total=?, payment_method=?, transaction_id=? WHERE id=?")
+      .run(total, payment_method, transaction_id, req.params.id);
+    if (result.changes === 0) return res.status(404).json({ error: 'Venta no encontrada' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/sales', authenticateToken, (req, res) => {
@@ -579,50 +613,41 @@ app.post('/api/sales', authenticateToken, (req, res) => {
   if (!items || items.length === 0) return res.status(400).json({ error: 'Carrito vacío' });
   const date = new Date().toISOString();
 
-  db.serialize(() => {
-    db.run("BEGIN TRANSACTION");
-    db.run("INSERT INTO sales (customer_id, total, currency, payment_method, transaction_id, date) VALUES (?, ?, ?, ?, ?, ?)",
-      [customer_id || null, total, currency || 'CUP', payment_method || 'efectivo', transaction_id || '', date],
-      function (err) {
-        if (err) { db.run("ROLLBACK"); return res.status(500).json({ error: err.message }); }
-        const saleId = this.lastID;
-        let itemsProcessed = 0;
-        let hasError = false;
+  try {
+    const insertSale = db.prepare("INSERT INTO sales (customer_id, total, currency, payment_method, transaction_id, date) VALUES (?, ?, ?, ?, ?, ?)");
+    const insertItem = db.prepare("INSERT INTO sale_items (sale_id, product_id, quantity, price, currency) VALUES (?, ?, ?, ?, ?)");
+    const updateStock = db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
 
-        for (const item of items) {
-          db.run("INSERT INTO sale_items (sale_id, product_id, quantity, price, currency) VALUES (?, ?, ?, ?, ?)",
-            [saleId, item.product_id, item.quantity, item.price, item.currency || 'CUP'],
-            (err) => { if (err) { hasError = true; } });
+    const result = db.transaction(() => {
+      const saleResult = insertSale.run(customer_id || null, total, currency || 'CUP', payment_method || 'efectivo', transaction_id || '', date);
+      const saleId = saleResult.lastInsertRowid;
+      for (const item of items) {
+        insertItem.run(saleId, item.product_id, item.quantity, item.price, item.currency || 'CUP');
+        updateStock.run(item.quantity, item.product_id);
+      }
+      return { saleId };
+    })();
 
-          db.run("UPDATE products SET stock = stock - ? WHERE id = ?",
-            [item.quantity, item.product_id],
-            (err) => {
-              if (err) { hasError = true; }
-              itemsProcessed++;
-              if (itemsProcessed === items.length) {
-                if (hasError) { db.run("ROLLBACK"); return res.status(500).json({ error: "Error al actualizar stock" }); }
-                else { db.run("COMMIT"); res.json({ success: true, saleId }); }
-              }
-            });
-        }
-      });
-  });
+    res.json({ success: true, saleId: result.saleId });
+  } catch (err) {
+    console.error('Error en venta:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/sales/:id/ticket', authenticateToken, (req, res) => {
   const saleId = req.params.id;
-  const query = `
-    SELECT s.id, s.date, s.total, s.currency, s.payment_method, s.transaction_id,
-           c.name as customer_name, c.phone as customer_phone,
-           si.product_id, p.name as product_name, si.quantity, si.price
-    FROM sales s
-    LEFT JOIN customers c ON s.customer_id = c.id
-    JOIN sale_items si ON s.id = si.sale_id
-    JOIN products p ON si.product_id = p.id
-    WHERE s.id = ?
-  `;
-  db.all(query, [saleId], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(`
+      SELECT s.id, s.date, s.total, s.currency, s.payment_method, s.transaction_id,
+             c.name as customer_name, c.phone as customer_phone,
+             si.product_id, p.name as product_name, si.quantity, si.price
+      FROM sales s
+      LEFT JOIN customers c ON s.customer_id = c.id
+      JOIN sale_items si ON s.id = si.sale_id
+      JOIN products p ON si.product_id = p.id
+      WHERE s.id = ?
+    `).all(saleId);
     if (!rows || rows.length === 0) return res.status(404).json({ error: 'Venta no encontrada' });
     const sale = {
       id: rows[0].id,
@@ -640,63 +665,68 @@ app.get('/api/sales/:id/ticket', authenticateToken, (req, res) => {
       }))
     };
     res.json(sale);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== ENDPOINTS DE DASHBOARD ==========
 app.get('/api/dashboard/stats', authenticateToken, (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  db.get("SELECT COUNT(*) as totalProducts FROM products", (err, productCount) => {
-    db.get("SELECT COUNT(*) as lowStockCount FROM products WHERE stock <= min_stock", (err, lowStock) => {
-      db.get("SELECT SUM(total) as todaySales FROM sales WHERE date LIKE ?", [`${today}%`], (err, salesToday) => {
-        db.get("SELECT SUM(quantity) as totalItemsSold FROM sale_items", (err, itemsSold) => {
-          db.get("SELECT COUNT(*) as totalCustomers FROM customers", (err, customers) => {
-            res.json({
-              totalProducts: productCount.totalProducts || 0,
-              lowStockCount: lowStock.lowStockCount || 0,
-              todaySales: (salesToday && salesToday.todaySales) || 0,
-              totalItemsSold: (itemsSold && itemsSold.totalItemsSold) || 0,
-              totalCustomers: (customers && customers.totalCustomers) || 0
-            });
-          });
-        });
-      });
+  try {
+    const totalProducts = db.prepare("SELECT COUNT(*) as count FROM products").get();
+    const lowStockCount = db.prepare("SELECT COUNT(*) as count FROM products WHERE stock <= min_stock").get();
+    const todaySales = db.prepare("SELECT SUM(total) as total FROM sales WHERE date LIKE ?").get(`${today}%`);
+    const totalItemsSold = db.prepare("SELECT SUM(quantity) as total FROM sale_items").get();
+    const totalCustomers = db.prepare("SELECT COUNT(*) as count FROM customers").get();
+    res.json({
+      totalProducts: totalProducts.count || 0,
+      lowStockCount: lowStockCount.count || 0,
+      todaySales: todaySales.total || 0,
+      totalItemsSold: totalItemsSold.total || 0,
+      totalCustomers: totalCustomers.count || 0
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/dashboard/top-products', authenticateToken, (req, res) => {
-  const query = `
-    SELECT p.id, p.name, SUM(si.quantity) as total_sold
-    FROM sale_items si
-    JOIN products p ON si.product_id = p.id
-    GROUP BY si.product_id
-    ORDER BY total_sold DESC
-    LIMIT 5
-  `;
-  db.all(query, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(`
+      SELECT p.id, p.name, SUM(si.quantity) as total_sold
+      FROM sale_items si
+      JOIN products p ON si.product_id = p.id
+      GROUP BY si.product_id
+      ORDER BY total_sold DESC
+      LIMIT 5
+    `).all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== NOTIFICACIONES ==========
 app.get('/api/notifications/low-stock', authenticateToken, (req, res) => {
-  db.all("SELECT id, name, stock, min_stock FROM products WHERE stock <= min_stock", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT id, name, stock, min_stock FROM products WHERE stock <= min_stock").all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/notifications/subscribe', authenticateToken, (req, res) => {
   const { subscription } = req.body;
   if (!subscription || !subscription.endpoint) return res.status(400).json({ error: 'Suscripción inválida' });
-  db.run("INSERT OR REPLACE INTO subscriptions (user_id, endpoint, keys) VALUES (?, ?, ?)",
-    [req.user.id, subscription.endpoint, JSON.stringify(subscription.keys)],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
+  try {
+    db.prepare("INSERT OR REPLACE INTO subscriptions (user_id, endpoint, keys) VALUES (?, ?, ?)")
+      .run(req.user.id, subscription.endpoint, JSON.stringify(subscription.keys));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/notifications/send', authenticateToken, (req, res) => {
@@ -705,8 +735,8 @@ app.post('/api/notifications/send', authenticateToken, (req, res) => {
   if (targetUserId && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'No tienes permiso para enviar a otros usuarios' });
   }
-  db.all("SELECT * FROM subscriptions WHERE user_id = ?", [userId], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT * FROM subscriptions WHERE user_id = ?").all(userId);
     if (rows.length === 0) return res.status(404).json({ error: 'No hay suscripciones para este usuario' });
     const notifications = rows.map(sub => {
       const subscription = { endpoint: sub.endpoint, keys: JSON.parse(sub.keys) };
@@ -716,25 +746,27 @@ app.post('/api/notifications/send', authenticateToken, (req, res) => {
     Promise.all(notifications)
       .then(results => res.json({ success: true, sent: results.filter(r => r !== null).length, total: rows.length }))
       .catch(err => res.status(500).json({ error: err.message }));
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/notifications/check-stock', authenticateToken, isAdmin, (req, res) => {
-  db.all("SELECT * FROM products WHERE stock <= min_stock", (err, products) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const products = db.prepare("SELECT * FROM products WHERE stock <= min_stock").all();
     if (products.length === 0) return res.json({ message: 'No hay productos con stock bajo', products: [] });
     const title = '⚠️ Alerta de stock bajo';
     const body = `${products.length} producto(s) tienen stock bajo: ${products.map(p => p.name).join(', ')}`;
-    db.all("SELECT * FROM subscriptions WHERE user_id = ?", [req.user.id], (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      rows.forEach(sub => {
-        const subscription = { endpoint: sub.endpoint, keys: JSON.parse(sub.keys) };
-        webpush.sendNotification(subscription, JSON.stringify({ title, body }))
-          .catch(err => console.error('Error enviando notificación stock:', err));
-      });
-      res.json({ products, notifications_sent: rows.length });
+    const rows = db.prepare("SELECT * FROM subscriptions WHERE user_id = ?").all(req.user.id);
+    rows.forEach(sub => {
+      const subscription = { endpoint: sub.endpoint, keys: JSON.parse(sub.keys) };
+      webpush.sendNotification(subscription, JSON.stringify({ title, body }))
+        .catch(err => console.error('Error enviando notificación stock:', err));
     });
-  });
+    res.json({ products, notifications_sent: rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== TELEGRAM ==========
@@ -778,85 +810,98 @@ const sendTelegramAlert = async (title, body) => {
 };
 
 const checkStockAndNotifyTelegram = async () => {
-  db.all("SELECT * FROM products WHERE stock <= min_stock", async (err, products) => {
-    if (err || products.length === 0) return;
+  try {
+    const products = db.prepare("SELECT * FROM products WHERE stock <= min_stock").all();
+    if (products.length === 0) return;
     const body = products.map(p => `• *${p.name}*: stock ${p.stock} (mínimo ${p.min_stock})`).join('\n');
     await sendTelegramAlert(`📦 Stock bajo (${products.length} productos)`, body);
-  });
+  } catch (err) { console.error('Error en checkStockAndNotifyTelegram:', err); }
 };
 setInterval(checkStockAndNotifyTelegram, 6 * 60 * 60 * 1000);
 setTimeout(checkStockAndNotifyTelegram, 5000);
 
 // ========== MONEDAS ==========
 app.get('/api/currencies', authenticateToken, (req, res) => {
-  db.all("SELECT * FROM currencies ORDER BY code", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT * FROM currencies ORDER BY code").all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/currencies', authenticateToken, isAdmin, (req, res) => {
   const { code, name, symbol, exchange_rate, is_default, active } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'Código y nombre requeridos' });
-  db.run("INSERT INTO currencies (code, name, symbol, exchange_rate, is_default, active) VALUES (?, ?, ?, ?, ?, ?)",
-    [code, name, symbol || '$', exchange_rate || 1, is_default || 0, active !== undefined ? active : 1],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    });
+  try {
+    const result = db.prepare("INSERT INTO currencies (code, name, symbol, exchange_rate, is_default, active) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(code, name, symbol || '$', exchange_rate || 1, is_default || 0, active !== undefined ? active : 1);
+    res.json({ id: result.lastInsertRowid });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/currencies/:id', authenticateToken, isAdmin, (req, res) => {
   const { code, name, symbol, exchange_rate, is_default, active } = req.body;
-  db.run("UPDATE currencies SET code=?, name=?, symbol=?, exchange_rate=?, is_default=?, active=? WHERE id=?",
-    [code, name, symbol, exchange_rate, is_default, active, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
+  try {
+    db.prepare("UPDATE currencies SET code=?, name=?, symbol=?, exchange_rate=?, is_default=?, active=? WHERE id=?")
+      .run(code, name, symbol, exchange_rate, is_default, active, req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/api/currencies/:id', authenticateToken, isAdmin, (req, res) => {
-  db.run("DELETE FROM currencies WHERE id=?", [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    db.prepare("DELETE FROM currencies WHERE id=?").run(req.params.id);
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== PROVEEDORES ==========
 app.get('/api/suppliers', authenticateToken, (req, res) => {
-  db.all("SELECT * FROM suppliers ORDER BY name", (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT * FROM suppliers ORDER BY name").all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/suppliers', authenticateToken, isAdmin, (req, res) => {
   const { name, contact, phone, email, address } = req.body;
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  db.run("INSERT INTO suppliers (name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?)",
-    [name, contact, phone, email, address],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    });
+  try {
+    const result = db.prepare("INSERT INTO suppliers (name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?)")
+      .run(name, contact, phone, email, address);
+    res.json({ id: result.lastInsertRowid });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/suppliers/:id', authenticateToken, isAdmin, (req, res) => {
   const { name, contact, phone, email, address } = req.body;
-  db.run("UPDATE suppliers SET name=?, contact=?, phone=?, email=?, address=? WHERE id=?",
-    [name, contact, phone, email, address, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    });
+  try {
+    db.prepare("UPDATE suppliers SET name=?, contact=?, phone=?, email=?, address=? WHERE id=?")
+      .run(name, contact, phone, email, address, req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/api/suppliers/:id', authenticateToken, isAdmin, (req, res) => {
-  db.run("DELETE FROM suppliers WHERE id=?", [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    db.prepare("DELETE FROM suppliers WHERE id=?").run(req.params.id);
     res.json({ success: true });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== COMPRAS ==========
@@ -864,59 +909,57 @@ app.post('/api/purchases', authenticateToken, isAdmin, (req, res) => {
   const { supplier_id, items, total, date } = req.body;
   if (!items || items.length === 0) return res.status(400).json({ error: 'Sin productos' });
   const purchaseDate = date || new Date().toISOString();
-  db.serialize(() => {
-    db.run("BEGIN TRANSACTION");
-    db.run("INSERT INTO purchases (supplier_id, total, date) VALUES (?, ?, ?)",
-      [supplier_id || null, total, purchaseDate],
-      function (err) {
-        if (err) { db.run("ROLLBACK"); return res.status(500).json({ error: err.message }); }
-        const purchaseId = this.lastID;
-        let itemsProcessed = 0;
-        let hasError = false;
-        for (const item of items) {
-          db.run("INSERT INTO purchase_items (purchase_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
-            [purchaseId, item.product_id, item.quantity, item.price],
-            (err) => { if (err) { hasError = true; } });
-          db.get("SELECT * FROM products WHERE id = ?", [item.product_id], (err, product) => {
-            if (product) {
-              db.run("UPDATE products SET stock = ?, price = ? WHERE id = ?",
-                [product.stock + item.quantity, item.price, item.product_id]);
-            }
-            itemsProcessed++;
-            if (itemsProcessed === items.length) {
-              if (hasError) { db.run("ROLLBACK"); return res.status(500).json({ error: "Error al procesar compra" }); }
-              else { db.run("COMMIT"); res.json({ success: true, purchaseId }); }
-            }
-          });
+  try {
+    const insertPurchase = db.prepare("INSERT INTO purchases (supplier_id, total, date) VALUES (?, ?, ?)");
+    const insertItem = db.prepare("INSERT INTO purchase_items (purchase_id, product_id, quantity, price) VALUES (?, ?, ?, ?)");
+    const updateProduct = db.prepare("UPDATE products SET stock = stock + ?, price = ? WHERE id = ?");
+    const getProduct = db.prepare("SELECT * FROM products WHERE id = ?");
+
+    const result = db.transaction(() => {
+      const purchaseResult = insertPurchase.run(supplier_id || null, total, purchaseDate);
+      const purchaseId = purchaseResult.lastInsertRowid;
+      for (const item of items) {
+        insertItem.run(purchaseId, item.product_id, item.quantity, item.price);
+        const product = getProduct.get(item.product_id);
+        if (product) {
+          updateProduct.run(item.quantity, item.price, item.product_id);
         }
-      });
-  });
+      }
+      return { purchaseId };
+    })();
+
+    res.json({ success: true, purchaseId: result.purchaseId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/purchases', authenticateToken, (req, res) => {
-  const query = `
-    SELECT p.id, p.date, p.total, s.name as supplier_name
-    FROM purchases p
-    LEFT JOIN suppliers s ON p.supplier_id = s.id
-    ORDER BY p.date DESC
-  `;
-  db.all(query, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(`
+      SELECT p.id, p.date, p.total, s.name as supplier_name
+      FROM purchases p
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      ORDER BY p.date DESC
+    `).all();
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== INVENTARIO ==========
 app.get('/api/inventory/valuation', authenticateToken, (req, res) => {
-  const query = `
-    SELECT p.id, p.name, p.stock, p.price, p.currency, (p.stock * p.price) as total_value
-    FROM products p WHERE p.stock > 0 ORDER BY total_value DESC
-  `;
-  db.all(query, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(`
+      SELECT p.id, p.name, p.stock, p.price, p.currency, (p.stock * p.price) as total_value
+      FROM products p WHERE p.stock > 0 ORDER BY total_value DESC
+    `).all();
     const total = rows.reduce((sum, r) => sum + (r.total_value || 0), 0);
     res.json({ items: rows, total });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== CONTABILIDAD ==========
@@ -930,51 +973,48 @@ app.get('/api/transactions', authenticateToken, (req, res) => {
   if (type) { query += " AND type = ?"; params.push(type); }
   if (category) { query += " AND category = ?"; params.push(category); }
   query += " ORDER BY date DESC, id DESC";
-  db.all(query, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(query).all(...params);
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/transactions', authenticateToken, (req, res) => {
   const { type, category, description, amount, currency, date } = req.body;
   if (!type || !category || !amount) return res.status(400).json({ error: 'Tipo, categoría y monto son requeridos' });
   const transactionDate = date || new Date().toISOString();
-  db.run(
-    "INSERT INTO transactions (type, category, description, amount, currency, date, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [type, category, description || '', amount, currency || 'CUP', transactionDate, req.user.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID, success: true });
-    }
-  );
+  try {
+    const result = db.prepare("INSERT INTO transactions (type, category, description, amount, currency, date, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(type, category, description || '', amount, currency || 'CUP', transactionDate, req.user.id);
+    res.json({ id: result.lastInsertRowid, success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/transactions/:id', authenticateToken, (req, res) => {
   const { type, category, description, amount, currency, date } = req.body;
-  const id = req.params.id;
-  db.run(
-    "UPDATE transactions SET type=?, category=?, description=?, amount=?, currency=?, date=? WHERE id=? AND (user_id=? OR user_id IS NULL)",
-    [type, category, description, amount, currency, date, id, req.user.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Transacción no encontrada' });
-      res.json({ success: true });
-    }
-  );
+  try {
+    const result = db.prepare("UPDATE transactions SET type=?, category=?, description=?, amount=?, currency=?, date=? WHERE id=? AND (user_id=? OR user_id IS NULL)")
+      .run(type, category, description, amount, currency, date, req.params.id, req.user.id);
+    if (result.changes === 0) return res.status(404).json({ error: 'Transacción no encontrada' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/api/transactions/:id', authenticateToken, (req, res) => {
-  const id = req.params.id;
-  db.run(
-    "DELETE FROM transactions WHERE id=? AND (user_id=? OR user_id IS NULL)",
-    [id, req.user.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Transacción no encontrada' });
-      res.json({ success: true });
-    }
-  );
+  try {
+    const result = db.prepare("DELETE FROM transactions WHERE id=? AND (user_id=? OR user_id IS NULL)")
+      .run(req.params.id, req.user.id);
+    if (result.changes === 0) return res.status(404).json({ error: 'Transacción no encontrada' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/transactions/summary', authenticateToken, (req, res) => {
@@ -985,8 +1025,8 @@ app.get('/api/transactions/summary', authenticateToken, (req, res) => {
   else if (start) { query += " AND date >= ?"; params.push(start); }
   else if (end) { query += " AND date <= ?"; params.push(end); }
   query += " GROUP BY type";
-  db.all(query, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare(query).all(...params);
     const summary = { income: 0, expense: 0, balance: 0 };
     rows.forEach(row => {
       if (row.type === 'income') summary.income = row.total || 0;
@@ -994,14 +1034,19 @@ app.get('/api/transactions/summary', authenticateToken, (req, res) => {
     });
     summary.balance = summary.income - summary.expense;
     res.json(summary);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/transactions/categories', authenticateToken, (req, res) => {
-  db.all("SELECT DISTINCT category FROM transactions WHERE user_id = ? OR user_id IS NULL ORDER BY category", [req.user.id], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const rows = db.prepare("SELECT DISTINCT category FROM transactions WHERE user_id = ? OR user_id IS NULL ORDER BY category")
+      .all(req.user.id);
     res.json(rows.map(r => r.category));
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ========== BACKUPS ==========
