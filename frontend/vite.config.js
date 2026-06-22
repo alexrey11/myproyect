@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  base: '/gestion-pro/',
+  // base: '/',  // (opcional, se puede omitir)
   plugins: [
     react(),
     VitePWA({
