@@ -262,7 +262,7 @@ try {
   // Usuario admin
   const adminExists = db.prepare("SELECT * FROM users WHERE username = ?").get('admin');
   if (!adminExists) {
-    const adminHash = bcrypt.hashSync('admin123', 10);
+    const adminHash = bcrypt.hashSync('123456', 10);
     db.prepare("INSERT INTO users (username, password, role, active) VALUES (?, ?, 'admin', 1)").run('admin', adminHash);
     console.log('✅ Usuario admin creado');
   }
