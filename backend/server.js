@@ -61,6 +61,16 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Middleware para SPA: sirve index.html para rutas no API
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 
 // ========== MIDDLEWARE ==========
 const authenticateToken = (req, res, next) => {
