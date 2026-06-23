@@ -61,16 +61,6 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Middleware para SPA: sirve index.html para rutas no API
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api')) {
-    return next();
-  }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
 
 // ========== MIDDLEWARE ==========
 const authenticateToken = (req, res, next) => {
@@ -104,8 +94,6 @@ const createTables = () => {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  const adminHash = bcrypt.hashSync('admin123', 10);
-  db.prepare("INSERT OR IGNORE INTO users (username, password, role, active) VALUES (?, ?, 'admin', 1)").run('admin', adminHash);
 
   // Productos
   db.exec(`
@@ -241,7 +229,6 @@ const createTables = () => {
   `);
 
   // ========== MIGRACIONES ==========
-  // Obtener columnas de cada tabla y agregar las que faltan
   const addColumnIfNotExists = (table, columnDef) => {
     const columns = db.prepare(`PRAGMA table_info(${table})`).all();
     const colNames = columns.map(c => c.name);
@@ -260,8 +247,27 @@ const createTables = () => {
   addColumnIfNotExists('sales', 'transaction_id TEXT');
   addColumnIfNotExists('sales', 'synced INTEGER DEFAULT 0');
   addColumnIfNotExists('sale_items', 'currency TEXT DEFAULT "CUP"');
+};
 
-  // ========== DATOS DE EJEMPLO ==========
+// Ejecutar creación de tablas
+try {
+  createTables();
+} catch (err) {
+  console.error('Error creando tablas:', err);
+  process.exit(1);
+}
+
+// ========== ASEGURAR DATOS DE EJEMPLO ==========
+try {
+  // Usuario admin
+  const adminExists = db.prepare("SELECT * FROM users WHERE username = ?").get('admin');
+  if (!adminExists) {
+    const adminHash = bcrypt.hashSync('admin123', 10);
+    db.prepare("INSERT INTO users (username, password, role, active) VALUES (?, ?, 'admin', 1)").run('admin', adminHash);
+    console.log('✅ Usuario admin creado');
+  }
+
+  // Productos
   const productCount = db.prepare("SELECT COUNT(*) as count FROM products").get();
   if (productCount.count === 0) {
     const insert = db.prepare("INSERT INTO products (name, price, stock, min_stock, sku, currency) VALUES (?, ?, ?, ?, ?, ?)");
@@ -275,9 +281,10 @@ const createTables = () => {
       for (const item of items) insert.run(...item);
     });
     insertMany(prods);
-    console.log("✅ Productos de muestra insertados");
+    console.log('✅ Productos de ejemplo insertados');
   }
 
+  // Clientes
   const customerCount = db.prepare("SELECT COUNT(*) as count FROM customers").get();
   if (customerCount.count === 0) {
     const insert = db.prepare("INSERT INTO customers (name, email, phone, address) VALUES (?, ?, ?, ?)");
@@ -290,9 +297,10 @@ const createTables = () => {
       for (const item of items) insert.run(...item);
     });
     insertMany(custs);
-    console.log("✅ Clientes de muestra insertados");
+    console.log('✅ Clientes de ejemplo insertados');
   }
 
+  // Monedas
   const currencyCount = db.prepare("SELECT COUNT(*) as count FROM currencies").get();
   if (currencyCount.count === 0) {
     const insert = db.prepare("INSERT INTO currencies (code, name, symbol, exchange_rate, is_default, active) VALUES (?, ?, ?, ?, ?, ?)");
@@ -305,9 +313,10 @@ const createTables = () => {
       for (const item of items) insert.run(...item);
     });
     insertMany(currencies);
-    console.log("✅ Monedas de muestra insertadas");
+    console.log('✅ Monedas de ejemplo insertadas');
   }
 
+  // Proveedores
   const supplierCount = db.prepare("SELECT COUNT(*) as count FROM suppliers").get();
   if (supplierCount.count === 0) {
     const insert = db.prepare("INSERT INTO suppliers (name, contact, phone, email, address) VALUES (?, ?, ?, ?, ?)");
@@ -320,16 +329,10 @@ const createTables = () => {
       for (const item of items) insert.run(...item);
     });
     insertMany(suppliers);
-    console.log("✅ Proveedores de muestra insertados");
+    console.log('✅ Proveedores de ejemplo insertados');
   }
-};
-
-// Ejecutar la creación de tablas
-try {
-  createTables();
 } catch (err) {
-  console.error('Error creando tablas:', err);
-  process.exit(1);
+  console.error('Error asegurando datos de ejemplo:', err);
 }
 
 // ========== ENDPOINTS DE AUTENTICACIÓN ==========
@@ -1084,6 +1087,20 @@ app.post('/api/restore', authenticateToken, isAdmin, (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ========== SERVIR EL FRONTEND (SPA) - MIDDLEWARE ==========
+// Esto debe ir DESPUÉS de todas las rutas de API y ANTES de app.listen
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Para cualquier ruta que no comience con /api, devolver index.html (SPA)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  // Si el archivo solicitado existe en public, se sirve automáticamente por express.static.
+  // Si no, devolvemos index.html para que React Router maneje la ruta.
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ========== INICIAR SERVIDOR ==========
