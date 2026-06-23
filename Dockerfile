@@ -1,9 +1,5 @@
-# Etapa 1: Preparar el backend
+# Etapa: Construir el backend
 FROM node:20 AS backend-build
-# Configurar proxy (reemplaza con tus credenciales)
-ENV HTTP_PROXY=http://alexrey:alexrey10@192.168.30.120:3128
-ENV HTTPS_PROXY=http://alexrey:alexrey10@192.168.30.120:3128
-ENV NO_PROXY=localhost,127.0.0.1
 WORKDIR /app/backend
 COPY backend/package*.json ./
 RUN npm install --legacy-peer-deps
