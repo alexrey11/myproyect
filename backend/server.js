@@ -258,14 +258,19 @@ try {
 }
 
 // ========== ASEGURAR DATOS DE EJEMPLO ==========
+
 try {
-  // Usuario admin
+  // Actualizar siempre la contraseña del admin
+  const adminHash = bcrypt.hashSync('123456', 10);
+  db.prepare("UPDATE users SET password = ? WHERE username = 'admin'").run(adminHash);
+
+  // Si no existe, insertarlo
   const adminExists = db.prepare("SELECT * FROM users WHERE username = ?").get('admin');
   if (!adminExists) {
-    const adminHash = bcrypt.hashSync('123456', 10);
     db.prepare("INSERT INTO users (username, password, role, active) VALUES (?, ?, 'admin', 1)").run('admin', adminHash);
-    console.log('✅ Usuario admin creado');
   }
+  console.log('✅ Usuario admin actualizado con contraseña 123456');
+
 
   // Productos
   const productCount = db.prepare("SELECT COUNT(*) as count FROM products").get();
